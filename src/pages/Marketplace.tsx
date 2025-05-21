@@ -5,12 +5,14 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { supabase } from "@/integrations/supabase/client";
 
 interface GridItem {
-  id: number;
+  id: string;
+  grid_number: number;
   price: number;
   owner: string | null;
-  image: string | null;
+  image_url: string | null;
 }
 
 const Marketplace = () => {
@@ -18,46 +20,83 @@ const Marketplace = () => {
   const [grid, setGrid] = useState<GridItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   
-  // Initialize grid (in a real app, we'd fetch from blockchain)
+  // 从Supabase加载未售出的网格数据
   useEffect(() => {
-    // Simulate loading data
-    setTimeout(() => {
-      const initialGrid: GridItem[] = [];
-      for (let i = 0; i < 100; i++) {
-        initialGrid.push({
-          id: i,
-          price: 0.05,
-          owner: Math.random() > 0.7 ? "dummy_address" : null,
-          image: Math.random() > 0.8 ? "https://picsum.photos/200" : null,
-        });
+    const loadAvailableGrids = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('grids')
+          .select('*')
+          .is('owner', null)
+          .order('grid_number', { ascending: true });
+          
+        if (error) {
+          throw error;
+        }
+        
+        setGrid(data as GridItem[]);
+      } catch (error) {
+        console.error('加载市场数据出错:', error);
+        toast.error('加载市场数据失败');
+      } finally {
+        setLoading(false);
       }
-      setGrid(initialGrid.filter(item => !item.owner)); // Only show available plots
-      setLoading(false);
-    }, 1500);
+    };
+    
+    loadAvailableGrids();
   }, []);
 
-  const handlePurchase = (item: GridItem) => {
+  const handlePurchase = async (item: GridItem) => {
     if (!connected) {
       toast.error("请先连接钱包");
       return;
     }
     
-    // Simulate transaction
+    // 显示处理中提示
     toast.promise(
-      new Promise(resolve => setTimeout(resolve, 2000)),
+      (async () => {
+        // 更新数据库
+        const { error } = await supabase
+          .from('grids')
+          .update({ owner: publicKey?.toString() })
+          .eq('id', item.id);
+          
+        if (error) {
+          throw error;
+        }
+        
+        // 从可用网格列表中移除
+        setGrid(grid.filter(g => g.id !== item.id));
+        
+        return true;
+      })(),
       {
         loading: "正在处理交易...",
-        success: `成功购买网格 #${item.id + 1}`,
+        success: `成功购买网格 #${item.grid_number + 1}`,
         error: "交易失败，请重试"
       }
     );
-    
-    // Remove from available grid
-    setGrid(grid.filter(g => g.id !== item.id));
   };
   
   const filterOptions = ["全部", "价格: 低到高", "价格: 高到低"];
   const [activeFilter, setActiveFilter] = useState("全部");
+
+  // 处理筛选
+  const handleFilter = (option: string) => {
+    setActiveFilter(option);
+    
+    let sortedGrid = [...grid];
+    if (option === "价格: 低到高") {
+      sortedGrid.sort((a, b) => a.price - b.price);
+    } else if (option === "价格: 高到低") {
+      sortedGrid.sort((a, b) => b.price - a.price);
+    } else {
+      // "全部" 按网格编号排序
+      sortedGrid.sort((a, b) => a.grid_number - b.grid_number);
+    }
+    
+    setGrid(sortedGrid);
+  };
 
   return (
     <div className="space-y-6">
@@ -74,7 +113,7 @@ const Marketplace = () => {
             key={option}
             variant={activeFilter === option ? "default" : "outline"}
             className={`${activeFilter === option ? "bg-sol hover:bg-sol-dark" : ""}`}
-            onClick={() => setActiveFilter(option)}
+            onClick={() => handleFilter(option)}
           >
             {option}
           </Button>
@@ -103,12 +142,12 @@ const Marketplace = () => {
             grid.map(item => (
               <Card key={item.id} className="border-border overflow-hidden">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">网格 #{item.id + 1}</CardTitle>
+                  <CardTitle className="text-lg">网格 #{item.grid_number + 1}</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-2 pb-4">
                   <div className="aspect-square bg-secondary rounded-md flex items-center justify-center">
                     <div className="w-16 h-16 rounded-full bg-gradient-radial from-sol/30 to-transparent flex items-center justify-center">
-                      <span className="font-bold text-xl">{item.id + 1}</span>
+                      <span className="font-bold text-xl">{item.grid_number + 1}</span>
                     </div>
                   </div>
                   <div className="mt-4 flex justify-between items-center">

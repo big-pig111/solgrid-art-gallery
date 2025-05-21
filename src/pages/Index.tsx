@@ -4,38 +4,95 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
+import { supabase } from "@/integrations/supabase/client";
 
 interface GridItem {
-  id: number;
+  id: string;
+  grid_number: number;
   price: number;
   owner: string | null;
-  image: string | null;
+  image_url: string | null;
 }
 
 const Index = () => {
   const { connected, publicKey } = useWallet();
   const [grid, setGrid] = useState<GridItem[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(true);
   const [purchaseCount, setPurchaseCount] = useState<number>(0);
   
-  // Initialize grid
+  // 从Supabase加载网格数据
   useEffect(() => {
-    const initialGrid: GridItem[] = [];
-    for (let i = 0; i < 100; i++) {
-      initialGrid.push({
-        id: i,
-        price: 0.05,
-        owner: null,
-        image: null,
-      });
-    }
-    setGrid(initialGrid);
+    const loadGridData = async () => {
+      try {
+        setLoading(true);
+        
+        // 从Supabase获取网格数据
+        const { data, error } = await supabase
+          .from('grids')
+          .select('*')
+          .order('grid_number', { ascending: true });
+        
+        if (error) {
+          throw error;
+        }
+        
+        if (data && data.length > 0) {
+          // 如果有数据，使用数据库中的数据
+          setGrid(data as GridItem[]);
+        } else {
+          // 如果没有数据，初始化网格并插入到数据库
+          const initialGrid: Omit<GridItem, 'id'>[] = [];
+          for (let i = 0; i < 100; i++) {
+            initialGrid.push({
+              grid_number: i,
+              price: 0.05,
+              owner: null,
+              image_url: null,
+            });
+          }
+          
+          // 批量插入初始网格数据
+          const { error: insertError } = await supabase
+            .from('grids')
+            .insert(initialGrid);
+            
+          if (insertError) {
+            throw insertError;
+          }
+          
+          // 重新获取插入的数据
+          const { data: newData } = await supabase
+            .from('grids')
+            .select('*')
+            .order('grid_number', { ascending: true });
+            
+          setGrid(newData as GridItem[]);
+        }
+      } catch (error) {
+        console.error('加载网格数据出错:', error);
+        toast.error('加载网格数据失败');
+        
+        // 如果加载失败，使用本地初始化的数据
+        const fallbackGrid: GridItem[] = [];
+        for (let i = 0; i < 100; i++) {
+          fallbackGrid.push({
+            id: i.toString(),
+            grid_number: i,
+            price: 0.05,
+            owner: null,
+            image_url: null,
+          });
+        }
+        setGrid(fallbackGrid);
+      } finally {
+        setLoading(false);
+      }
+    };
     
-    // In a real app, we would fetch this data from the blockchain
-    // This is just a placeholder
+    loadGridData();
   }, []);
 
-  const handlePurchase = (item: GridItem) => {
+  const handlePurchase = async (item: GridItem) => {
     if (!connected) {
       toast.error("请先连接钱包");
       return;
@@ -43,8 +100,20 @@ const Index = () => {
     
     setLoading(true);
     
-    // Simulate blockchain transaction
-    setTimeout(() => {
+    try {
+      // 更新Supabase中的网格数据
+      const { error } = await supabase
+        .from('grids')
+        .update({ 
+          owner: publicKey?.toString() 
+        })
+        .eq('id', item.id);
+        
+      if (error) {
+        throw error;
+      }
+      
+      // 更新本地状态
       const newGrid = [...grid];
       const index = newGrid.findIndex((g) => g.id === item.id);
       
@@ -57,33 +126,56 @@ const Index = () => {
         setGrid(newGrid);
         setPurchaseCount(prev => prev + 1);
         
-        // Increase price every 10 purchases
+        // 价格上涨逻辑
         if ((purchaseCount + 1) % 10 === 0) {
-          const updatedGrid = newGrid.map(g => {
-            if (!g.owner) {
-              return {
-                ...g,
-                price: g.price * 1.75
-              };
+          // 更新所有未购买网格的价格
+          const idsToUpdate = newGrid
+            .filter(g => !g.owner)
+            .map(g => g.id);
+          
+          if (idsToUpdate.length > 0) {
+            // 批量更新价格
+            const { error: priceUpdateError } = await supabase
+              .from('grids')
+              .update({ price: item.price * 1.75 })
+              .in('id', idsToUpdate);
+              
+            if (priceUpdateError) {
+              console.error('更新价格出错:', priceUpdateError);
+            } else {
+              // 更新本地状态
+              const updatedGrid = newGrid.map(g => {
+                if (!g.owner) {
+                  return {
+                    ...g,
+                    price: g.price * 1.75
+                  };
+                }
+                return g;
+              });
+              
+              setGrid(updatedGrid);
+              
+              toast.info("价格已上涨", {
+                description: "每10个网格被第一次购买后，初始价格上涨75%"
+              });
             }
-            return g;
-          });
-          setGrid(updatedGrid);
-          toast.info("价格已上涨", {
-            description: "每10个网格被第一次购买后，初始价格上涨75%"
-          });
+          }
         }
         
         toast.success("购买成功", {
-          description: `您已购买网格 #${item.id + 1}`
+          description: `您已购买网格 #${item.grid_number + 1}`
         });
       }
-      
+    } catch (error) {
+      console.error('购买网格出错:', error);
+      toast.error('购买失败，请重试');
+    } finally {
       setLoading(false);
-    }, 1500);
+    }
   };
 
-  const handleImageUpload = (item: GridItem) => {
+  const handleImageUpload = async (item: GridItem) => {
     if (!connected) {
       toast.error("请先连接钱包");
       return;
@@ -94,32 +186,69 @@ const Index = () => {
       return;
     }
     
-    // In a real app, we would upload the image to a server
-    // For now, we'll just simulate it
+    // 创建文件输入
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "image/*";
-    input.onchange = (e) => {
+    
+    input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const newGrid = [...grid];
-          const index = newGrid.findIndex((g) => g.id === item.id);
+        try {
+          // 显示上传中提示
+          const toastId = toast.loading("正在上传图片...");
           
-          if (index !== -1) {
-            newGrid[index] = {
-              ...newGrid[index],
-              image: event.target?.result as string,
-            };
+          // 生成唯一的文件名：网格ID + 时间戳 + 文件扩展名
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${item.id}_${Date.now()}.${fileExt}`;
+          const filePath = `grid_${item.grid_number}/${fileName}`;
+          
+          // 上传文件到Supabase存储
+          const { error: uploadError, data } = await supabase
+            .storage
+            .from('grid_images')
+            .upload(filePath, file, {
+              cacheControl: '3600',
+              upsert: true
+            });
             
-            setGrid(newGrid);
-            toast.success("图片上传成功");
+          if (uploadError) {
+            throw uploadError;
           }
-        };
-        reader.readAsDataURL(file);
+          
+          // 获取公共URL
+          const { data: { publicUrl } } = supabase
+            .storage
+            .from('grid_images')
+            .getPublicUrl(filePath);
+            
+          // 更新数据库中的图片URL
+          const { error: updateError } = await supabase
+            .from('grids')
+            .update({ image_url: publicUrl })
+            .eq('id', item.id);
+            
+          if (updateError) {
+            throw updateError;
+          }
+          
+          // 更新本地状态
+          setGrid(grid.map(g => {
+            if (g.id === item.id) {
+              return { ...g, image_url: publicUrl };
+            }
+            return g;
+          }));
+          
+          toast.dismiss(toastId);
+          toast.success("图片上传成功");
+        } catch (error) {
+          console.error('上传图片出错:', error);
+          toast.error('上传图片失败，请重试');
+        }
       }
     };
+    
     input.click();
   };
 
@@ -142,10 +271,10 @@ const Index = () => {
                   item.owner ? "grid-item-owned" : "grid-item"
                 } relative group`}
               >
-                {item.image ? (
+                {item.image_url ? (
                   <img 
-                    src={item.image} 
-                    alt={`Grid ${item.id}`}
+                    src={item.image_url} 
+                    alt={`Grid ${item.grid_number}`}
                     className="w-full h-full object-cover"
                   />
                 ) : null}
@@ -181,7 +310,7 @@ const Index = () => {
                   )}
                 </div>
                 
-                {item.owner && !item.image && (
+                {item.owner && !item.image_url && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="w-3 h-3 rounded-full bg-sol animate-pulse-light"></div>
                   </div>
