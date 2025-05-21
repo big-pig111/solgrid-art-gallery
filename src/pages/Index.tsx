@@ -213,6 +213,7 @@ const Index = () => {
             });
             
           if (uploadError) {
+            console.error("上传错误:", uploadError);
             throw uploadError;
           }
           
@@ -229,6 +230,7 @@ const Index = () => {
             .eq('id', item.id);
             
           if (updateError) {
+            console.error("更新数据库错误:", updateError);
             throw updateError;
           }
           
@@ -270,6 +272,14 @@ const Index = () => {
                 className={`${
                   item.owner ? "grid-item-owned" : "grid-item"
                 } relative group`}
+                style={{
+                  aspectRatio: "1/1",
+                  width: "100%",
+                  height: "auto",
+                  border: "1px solid #ccc",
+                  position: "relative",
+                  overflow: "hidden"
+                }}
               >
                 {item.image_url ? (
                   <img 
@@ -280,7 +290,7 @@ const Index = () => {
                 ) : null}
                 
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center transition-opacity p-1">
-                  <p className="text-xs font-medium text-center mb-1">
+                  <p className="text-xs font-medium text-center mb-1 text-white">
                     {item.owner 
                       ? "已拥有" 
                       : `${item.price} SOL`}
@@ -302,7 +312,7 @@ const Index = () => {
                     <Button
                       variant="outline"
                       size="sm"
-                      className="w-full text-xs h-7 mt-1"
+                      className="w-full text-xs h-7 mt-1 bg-white/10 text-white hover:bg-white/20"
                       onClick={() => handleImageUpload(item)}
                     >
                       上传图片
